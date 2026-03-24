@@ -144,17 +144,17 @@ def _embed_batch(texts: list[str]) -> list[list[float]]:
     return vectors
 
 
-def clear_index() -> None:
-    """Delete ALL vectors from the current index (keeps the index itself)."""
-    get_index().delete(delete_all=True)
+def clear_index(index_name: str | None = None) -> None:
+    """Delete ALL vectors from the given index (keeps the index itself)."""
+    get_index(index_name).delete(delete_all=True)
 
 
-def delete_document(filename: str) -> int:
+def delete_document(filename: str, index_name: str | None = None) -> int:
     """
     Delete all Pinecone vectors that belong to *filename*.
     Returns the number of vectors deleted (approximate via stats diff).
     """
-    index = get_index()
+    index = get_index(index_name)
     before = index.describe_index_stats().total_vector_count
     index.delete(filter={"source_file": {"$eq": filename}})
     after = index.describe_index_stats().total_vector_count
@@ -163,7 +163,7 @@ def delete_document(filename: str) -> int:
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-def ingest(file_path: str) -> list[dict]:
+def ingest(file_path: str, index_name: str | None = None) -> list[dict]:
     """
     Parse, chunk, embed, and upsert a document into Pinecone.
     Supports: PDF, DOCX, TXT, PNG, JPG, JPEG, WEBP, GIF.
@@ -208,7 +208,7 @@ def ingest(file_path: str) -> list[dict]:
         for c, vec in zip(chunks, vectors)
     ]
 
-    index = get_index()
+    index = get_index(index_name)
     batch_size = 100
     for i in range(0, len(records), batch_size):
         index.upsert(vectors=records[i : i + batch_size])

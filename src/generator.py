@@ -43,6 +43,7 @@ def answer(
     query: str,
     chat_history: list[dict] | None = None,
     top_k: int | None = None,
+    index_name: str | None = None,
 ) -> GeneratorResponse:
     """Retrieve relevant chunks and generate a grounded answer via OpenRouter.
 
@@ -55,7 +56,7 @@ def answer(
     Automatically falls back through models if one is rate-limited or unavailable.
     """
     # Retrieve relevant chunks for the current query
-    matches = retrieve(query, top_k=top_k)
+    matches = retrieve(query, top_k=top_k, index_name=index_name)
 
     if not matches:
         return GeneratorResponse(

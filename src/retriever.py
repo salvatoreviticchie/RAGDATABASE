@@ -3,9 +3,14 @@ from __future__ import annotations
 from .config import settings, get_index, get_pc
 
 
-def retrieve(query: str, top_k: int | None = None) -> list[dict]:
+def retrieve(query: str, top_k: int | None = None, index_name: str | None = None) -> list[dict]:
     """
     Embed the query using Pinecone Inference and return the top_k most similar chunks.
+
+    Args:
+        query:       The search query.
+        top_k:       Number of results to return (defaults to settings.top_k).
+        index_name:  Override which index to search (defaults to settings.pinecone_index_name).
 
     Each result dict has:
         score       float   cosine similarity (0-1, higher is more relevant)
@@ -21,7 +26,7 @@ def retrieve(query: str, top_k: int | None = None) -> list[dict]:
     )
     query_vector = response.data[0]["values"]
 
-    index = get_index()
+    index = get_index(index_name)
     results = index.query(
         vector=query_vector,
         top_k=k,
