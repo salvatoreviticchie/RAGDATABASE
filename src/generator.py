@@ -13,19 +13,15 @@ _openrouter = OpenAI(
     base_url="https://openrouter.ai/api/v1",
 )
 
-# Primary model from .env, then fallbacks tried in order.
-# Models are spread across different upstream providers so they don't all
-# rate-limit at the same time (Venice, Fireworks, Together, Google, etc.)
+# Primary model from .env, then paid fallbacks in order.
+# Remove :free suffix so OpenRouter routes via your credit balance (no rate limits).
 _FALLBACK_MODELS = [
     settings.llm_model,
-    "mistralai/mistral-7b-instruct:free",        # Fireworks / Together
-    "google/gemma-2-9b-it:free",                 # Google
-    "google/gemma-3-1b-it:free",                 # Google (small, fast)
-    "qwen/qwen-2-7b-instruct:free",              # Together
-    "microsoft/phi-3-mini-128k-instruct:free",   # Azure / Together
-    "meta-llama/llama-3.2-3b-instruct:free",     # Fireworks
-    "openchat/openchat-7b:free",                 # Lepton
-    "huggingfaceh4/zephyr-7b-beta:free",         # HuggingFace
+    "meta-llama/llama-3.3-70b-instruct",   # strong, cheap (~$0.0003/1k tokens)
+    "mistralai/mistral-7b-instruct",        # very fast, very cheap
+    "google/gemma-2-9b-it",                # reliable Google model
+    "qwen/qwen-2-7b-instruct",             # good fallback
+    "microsoft/phi-3-mini-128k-instruct",  # lightweight fallback
 ]
 
 _SYSTEM_PROMPT = """You are a precise document assistant. Answer ONLY using the context provided below.
