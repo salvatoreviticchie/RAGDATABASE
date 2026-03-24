@@ -52,6 +52,24 @@ def _embed_batch(texts: list[str]) -> list[list[float]]:
     return vectors
 
 
+def delete_document(filename: str) -> int:
+    """
+    Delete all Pinecone vectors that belong to *filename*.
+    Returns the number of vectors deleted (approximate via stats diff).
+    """
+    index = get_index()
+
+    # Count before
+    before = index.describe_index_stats().total_vector_count
+
+    # Delete by metadata filter — removes every chunk for this file
+    index.delete(filter={"source_file": {"$eq": filename}})
+
+    # Count after
+    after = index.describe_index_stats().total_vector_count
+    return max(0, before - after)
+
+
 def ingest(file_path: str) -> list[dict]:
     """
     Parse, chunk, embed, and upsert a document into Pinecone.

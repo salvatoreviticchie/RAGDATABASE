@@ -5,7 +5,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from src.ingestor import ingest
+from src.ingestor import ingest, delete_document
 from src.generator import answer
 
 UPLOAD_DIR = Path("data/uploads")
@@ -44,7 +44,18 @@ with st.sidebar:
         st.markdown("---")
         st.markdown("**Indexed files**")
         for fname in sorted(st.session_state.indexed_files):
-            st.markdown(f"- {fname}")
+            col1, col2 = st.columns([4, 1])
+            col1.markdown(f"📄 {fname}")
+            if col2.button("🗑️", key=f"del_{fname}", help=f"Delete {fname}"):
+                with st.spinner(f"Deleting {fname}…"):
+                    deleted = delete_document(fname)
+                    # Also remove local upload file if it exists
+                    local = UPLOAD_DIR / fname
+                    if local.exists():
+                        local.unlink()
+                st.session_state.indexed_files.discard(fname)
+                st.success(f"Deleted **{fname}** ({deleted} vectors removed)")
+                st.rerun()
 
 # ── Main area — chat interface ────────────────────────────────────────────────
 st.title("📄 RAG Document Q&A")
