@@ -1,98 +1,216 @@
 # RAG Document Q&A
 
-A Retrieval-Augmented Generation (RAG) app that lets you upload PDF or TXT documents and ask questions about them. Built with Pinecone, OpenAI, and Streamlit.
+A Retrieval-Augmented Generation (RAG) app that lets you upload PDF or TXT documents and ask questions about them.
+**100% free to run** — powered by Pinecone Inference (embeddings), Pinecone serverless (vector DB), and any free OpenRouter LLM.
+
+---
 
 ## Architecture
 
 ```
-User uploads PDF/TXT
-        │
-        ▼
-  PyMuPDF / open()   ──► RecursiveCharacterTextSplitter
-        │
-        ▼
-  OpenAI text-embedding-3-small   ──► Pinecone (cosine, 1536d)
+User uploads PDF / TXT
+         │
+         ▼
+   PyMuPDF / open()  ──►  RecursiveCharacterTextSplitter
+         │
+         ▼
+  Pinecone Inference API          (llama-text-embed-v2, 1024d)
+  input_type = "passage"  ──►  Pinecone serverless index (cosine)
 
 User types question
-        │
-        ▼
-  Embed query  ──►  Pinecone top-k search
-        │
-        ▼
-  GPT-4o (temperature=0) + retrieved context
-        │
-        ▼
+         │
+         ▼
+  Pinecone Inference API          (llama-text-embed-v2, 1024d)
+  input_type = "query"   ──►  Pinecone top-k search
+         │
+         ▼
+  OpenRouter free LLM  (google/gemma-3-27b-it:free by default)
+  + retrieved context
+         │
+         ▼
   Answer with inline citations + expandable source chunks
 ```
 
+---
+
 ## Stack
 
-| Component     | Technology                        |
-|---------------|-----------------------------------|
-| Vector DB     | Pinecone (serverless)             |
-| Embeddings    | OpenAI text-embedding-3-small     |
-| LLM           | OpenAI GPT-4o                     |
-| UI            | Streamlit                         |
-| PDF parsing   | PyMuPDF                           |
-| Chunking      | LangChain RecursiveCharacterTextSplitter |
+| Component      | Technology                                      | Cost  |
+|----------------|-------------------------------------------------|-------|
+| Vector DB      | Pinecone serverless                             | Free  |
+| Embeddings     | Pinecone Inference (`llama-text-embed-v2`)      | Free  |
+| LLM            | OpenRouter (`google/gemma-3-27b-it:free`)       | Free  |
+| UI             | Streamlit                                       | Free  |
+| PDF parsing    | PyMuPDF                                         | Free  |
+| Chunking       | LangChain RecursiveCharacterTextSplitter        | Free  |
+
+---
+
+## Prerequisites
+
+- Python 3.10+
+- A [Pinecone](https://app.pinecone.io) account (free tier)
+- An [OpenRouter](https://openrouter.ai) account (free tier)
+
+---
 
 ## Setup
 
-### 1. Clone and install
+### 1. Clone the repo
 
 ```bash
 git clone git@github.com:salvatoreviticchie/RAGDATABASE.git
 cd RAGDATABASE
+```
+
+### 2. Create and activate a virtual environment
+
+```bash
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+```
+
+### 3. Install dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 2. Configure API keys
+### 4. Get your API keys
+
+**Pinecone**
+1. Sign up at https://app.pinecone.io (no credit card needed)
+2. In the left sidebar click **API Keys**
+3. Copy your default key (starts with `pcsk-...`)
+
+**OpenRouter**
+1. Sign up at https://openrouter.ai (no credit card needed for free models)
+2. Go to **Keys** → **Create key**
+3. Copy your key (starts with `sk-or-...`)
+
+### 5. Configure environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and fill in your keys:
+Open `.env` and fill in your two keys — everything else can stay as-is:
 
-```
-OPENAI_API_KEY=sk-...
-PINECONE_API_KEY=pcsk-...
-PINECONE_INDEX_NAME=rag-docs
-PINECONE_CLOUD=aws
-PINECONE_REGION=us-east-1
+```env
+PINECONE_API_KEY=pcsk-...        # your Pinecone key
+OPENROUTER_API_KEY=sk-or-...     # your OpenRouter key
 ```
 
-- Get an OpenAI key at https://platform.openai.com/api-keys
-- Get a Pinecone key at https://app.pinecone.io — create a free serverless index
+> The Pinecone index is created **automatically** the first time you run the app.
 
-### 3. Run
+### 6. Run the app
 
 ```bash
 streamlit run app.py
 ```
 
-Open http://localhost:8501 in your browser.
+Open **http://localhost:8501** in your browser.
+
+---
 
 ## Usage
 
-1. **Upload documents** — use the sidebar to upload one or more PDF or TXT files
-2. **Click "Index Documents"** — chunks are embedded and stored in Pinecone
-3. **Ask a question** — type in the chat input at the bottom
-4. The app returns a grounded answer with source citations and expandable chunk previews
+1. **Sidebar** → click **Browse files** → select one or more PDF or TXT files
+2. Click **Index Documents** and wait for the "Indexed N chunks" confirmation
+3. Type a question in the chat box at the bottom
+4. Expand **Sources** under any answer to see which chunks were retrieved and their relevance scores
 
-## Project Structure
+---
+
+## Choosing a different model
+
+### Embedding models (Pinecone Inference — both free)
+
+| Model                    | Dimensions | Notes                           |
+|--------------------------|------------|---------------------------------|
+| `llama-text-embed-v2`    | 1024       | Default — best quality          |
+| `multilingual-e5-large`  | 384        | Faster, supports 100+ languages |
+
+To switch, update `.env`:
+
+```env
+EMBEDDING_MODEL=multilingual-e5-large
+EMBEDDING_DIMENSIONS=384
+```
+
+> **Important:** If you change the embedding model you must delete and recreate the Pinecone index (see section below).
+
+### Free LLM models (OpenRouter)
+
+```env
+LLM_MODEL=google/gemma-3-27b-it:free
+LLM_MODEL=meta-llama/llama-3.3-70b-instruct:free
+LLM_MODEL=deepseek/deepseek-chat:free
+LLM_MODEL=mistralai/mistral-7b-instruct:free
+LLM_MODEL=qwen/qwq-32b:free
+```
+
+Browse the full list at https://openrouter.ai/models?q=free
+
+---
+
+## Resetting the Pinecone index
+
+Run this once in a Python shell whenever you need to recreate the index
+(e.g. after changing the embedding model or dimensions):
+
+```python
+from dotenv import load_dotenv
+load_dotenv()
+
+from src.config import get_pc, settings
+from pinecone import ServerlessSpec
+
+pc = get_pc()
+
+if settings.pinecone_index_name in [i.name for i in pc.list_indexes()]:
+    pc.delete_index(settings.pinecone_index_name)
+    print("Old index deleted.")
+
+pc.create_index(
+    name=settings.pinecone_index_name,
+    dimension=settings.embedding_dimensions,
+    metric="cosine",
+    spec=ServerlessSpec(cloud=settings.pinecone_cloud, region=settings.pinecone_region),
+)
+print(f"Index '{settings.pinecone_index_name}' created with {settings.embedding_dimensions} dimensions.")
+```
+
+---
+
+## Project structure
 
 ```
-├── app.py                  # Streamlit entry point
-├── src/
-│   ├── config.py           # Settings + Pinecone index factory
-│   ├── ingestor.py         # Parse → chunk → embed → upsert
-│   ├── retriever.py        # Query embedding + Pinecone search
-│   ├── generator.py        # GPT-4o answer generation
-│   └── utils.py            # ID hashing, text cleaning
-├── requirements.txt
-├── .env.example
-└── .gitignore
+RAGDATABASE/
+├── app.py                  # Streamlit UI — upload, index, chat
+├── requirements.txt        # Python dependencies
+├── .env.example            # Environment variable template
+├── .gitignore
+├── README.md
+└── src/
+    ├── __init__.py
+    ├── config.py           # Settings dataclass + Pinecone client factory
+    ├── ingestor.py         # parse → chunk → embed (Pinecone) → upsert pipeline
+    ├── retriever.py        # query embed (Pinecone) + vector search
+    ├── generator.py        # LLM answer generation via OpenRouter
+    └── utils.py            # sha256 vector ID + whitespace cleaner
 ```
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| `KeyError: 'OPENROUTER_API_KEY'` | Make sure `.env` exists (not just `.env.example`) and the key is set |
+| `KeyError: 'PINECONE_API_KEY'` | Same as above — check `.env` |
+| `pinecone.exceptions.UnauthorizedException` | Double-check your Pinecone key for extra spaces or truncation |
+| Dimension mismatch error on upsert | Your index was created with a different model — run the reset script above |
+| Slow first question | Normal — Pinecone cold-starts a serverless index after idle time (~2–3 s) |
+| `ModuleNotFoundError: fitz` | Run `pip install PyMuPDF` (import name differs from package name) |
+| OpenRouter 429 rate limit | Free models allow ~20 req/min — wait a moment and retry |

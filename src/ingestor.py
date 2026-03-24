@@ -5,12 +5,9 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from openai import OpenAI
 
-from .config import settings, get_index
+from .config import settings, get_index, get_pc
 from .utils import make_vector_id, clean_text
-
-_openai = OpenAI(api_key=settings.openai_api_key)
 
 # 4 chars ≈ 1 token; convert token counts to character counts
 _CHUNK_SIZE_CHARS = settings.chunk_size * 4
@@ -40,16 +37,18 @@ def _extract_pages(file_path: str) -> list[tuple[int, str]]:
 
 
 def _embed_batch(texts: list[str]) -> list[list[float]]:
-    """Embed a list of texts using OpenAI, in batches of 100."""
+    """Embed a list of texts using Pinecone Inference API, in batches of 96."""
+    pc = get_pc()
     vectors: list[list[float]] = []
-    batch_size = 100
+    batch_size = 96
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
-        response = _openai.embeddings.create(
-            input=batch,
+        response = pc.inference.embed(
             model=settings.embedding_model,
+            inputs=batch,
+            parameters={"input_type": "passage", "truncate": "END"},
         )
-        vectors.extend([item.embedding for item in response.data])
+        vectors.extend([item["values"] for item in response.data])
     return vectors
 
 

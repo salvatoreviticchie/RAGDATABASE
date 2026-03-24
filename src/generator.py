@@ -7,7 +7,10 @@ from openai import OpenAI
 from .config import settings
 from .retriever import retrieve
 
-_openai = OpenAI(api_key=settings.openai_api_key)
+_openrouter = OpenAI(
+    api_key=settings.openrouter_api_key,
+    base_url="https://openrouter.ai/api/v1",
+)
 
 _SYSTEM_PROMPT = """You are a precise document assistant. Answer ONLY using the context provided below.
 If the answer cannot be found in the context, respond with: "I could not find this in the uploaded documents."
@@ -21,7 +24,7 @@ class GeneratorResponse:
 
 
 def answer(query: str, top_k: int | None = None) -> GeneratorResponse:
-    """Retrieve relevant chunks and generate a grounded answer with GPT-4o."""
+    """Retrieve relevant chunks and generate a grounded answer via OpenRouter."""
     matches = retrieve(query, top_k=top_k)
 
     if not matches:
@@ -40,7 +43,7 @@ def answer(query: str, top_k: int | None = None) -> GeneratorResponse:
 
     user_message = f"Context:\n---\n{context}\n---\n\nQuestion: {query}"
 
-    completion = _openai.chat.completions.create(
+    completion = _openrouter.chat.completions.create(
         model=settings.llm_model,
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
