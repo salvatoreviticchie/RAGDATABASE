@@ -25,6 +25,9 @@ if "chat_history" not in st.session_state:
 if "confirm_clear" not in st.session_state:
     st.session_state.confirm_clear = False
 
+if "preview_file" not in st.session_state:
+    st.session_state.preview_file: str | None = None
+
 # Load persisted file list for the active index on every startup
 # (uses the JSON file so it survives restarts)
 if "indexed_files" not in st.session_state:
@@ -81,20 +84,53 @@ with st.sidebar:
 
     if st.session_state.indexed_files:
         st.markdown("---")
-        st.markdown("**Indexed files**")
-        for fname in sorted(st.session_state.indexed_files):
-            col1, col2 = st.columns([4, 1])
-            col1.markdown(f"📄 {fname}")
-            if col2.button("🗑️", key=f"del_{fname}", help=f"Delete {fname}"):
-                with st.spinner(f"Deleting {fname}…"):
-                    deleted = delete_document(fname, index_name=active_index)
-                    local = UPLOAD_DIR / fname
-                    if local.exists():
-                        local.unlink()
-                st.session_state.indexed_files.discard(fname)
-                remove_file(active_index, fname)  # remove from JSON
-                st.success(f"Deleted **{fname}** ({deleted} vectors removed)")
-                st.rerun()
+        file_count = len(st.session_state.indexed_files)
+        with st.expander(f"📁 Indexed files ({file_count})", expanded=True):
+            for fname in sorted(st.session_state.indexed_files):
+                ext = fname.lower().rsplit(".", 1)[-1]
+                icon = {"pdf": "📕", "docx": "📘", "doc": "📘", "txt": "📃"}.get(
+                    ext, "🖼️" if ext in {"png","jpg","jpeg","webp","gif"} else "📄"
+                )
+                col1, col2, col3, col4 = st.columns([4, 1, 1, 1])
+                col1.markdown(f"{icon} {fname}")
+
+                local_path = UPLOAD_DIR / fname
+
+                # ── Preview button ───────────────────────────────────────────
+                is_previewing = st.session_state.preview_file == fname
+                if col2.button(
+                    "👁️" if not is_previewing else "✖️",
+                    key=f"prev_{fname}",
+                    help="Preview file" if not is_previewing else "Close preview",
+                ):
+                    st.session_state.preview_file = None if is_previewing else fname
+                    st.rerun()
+
+                # ── Download button ──────────────────────────────────────────
+                if local_path.exists():
+                    col3.download_button(
+                        label="⬇️",
+                        data=local_path.read_bytes(),
+                        file_name=fname,
+                        mime="application/octet-stream",
+                        key=f"dl_{fname}",
+                        help=f"Download {fname}",
+                    )
+                else:
+                    col3.markdown("&nbsp;", unsafe_allow_html=True)
+
+                # ── Delete button ────────────────────────────────────────────
+                if col4.button("🗑️", key=f"del_{fname}", help=f"Delete {fname}"):
+                    with st.spinner(f"Deleting {fname}…"):
+                        deleted = delete_document(fname, index_name=active_index)
+                        if local_path.exists():
+                            local_path.unlink()
+                    if st.session_state.preview_file == fname:
+                        st.session_state.preview_file = None
+                    st.session_state.indexed_files.discard(fname)
+                    remove_file(active_index, fname)
+                    st.success(f"Deleted **{fname}** ({deleted} vectors removed)")
+                    st.rerun()
 
     # ── Index management ──────────────────────────────────────────────────────
     st.markdown("---")
@@ -163,9 +199,44 @@ with st.sidebar:
             else:
                 col2.markdown("🔒")
 
-# ── Main area — chat interface ────────────────────────────────────────────────
+# ── Main area — file preview ──────────────────────────────────────────────────
 st.title("📄 RAG Document Q&A")
 st.caption(f"Index: `{active_index}` · Upload documents in the sidebar, then ask questions below.")
+
+if st.session_state.preview_file:
+    fname = st.session_state.preview_file
+    local_path = UPLOAD_DIR / fname
+    ext = fname.lower().rsplit(".", 1)[-1]
+
+    with st.expander(f"👁️ Preview — {fname}", expanded=True):
+        if not local_path.exists():
+            st.warning("File no longer on disk — it was indexed but the original was removed.")
+        elif ext == "txt":
+            st.code(local_path.read_text(errors="replace"), language="text")
+        elif ext in {"png", "jpg", "jpeg", "webp", "gif"}:
+            st.image(str(local_path), use_container_width=True)
+        elif ext == "pdf":
+            # Embed PDF in an iframe
+            import base64
+            b64 = base64.b64encode(local_path.read_bytes()).decode()
+            st.markdown(
+                f'<iframe src="data:application/pdf;base64,{b64}" '
+                f'width="100%" height="600px" style="border:none;"></iframe>',
+                unsafe_allow_html=True,
+            )
+        elif ext in {"docx", "doc"}:
+            # Extract plain text for preview
+            try:
+                from docx import Document as DocxDocument
+                doc = DocxDocument(str(local_path))
+                text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+                st.text_area("Document text", text, height=400, disabled=True)
+            except Exception as e:
+                st.info(f"Cannot preview this file type inline. Download it to view. ({e})")
+        else:
+            st.info("Preview not available for this file type — use the ⬇️ button to download.")
+
+    st.divider()
 
 # Render existing chat history
 for msg in st.session_state.chat_history:
