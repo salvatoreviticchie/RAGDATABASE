@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
-from openai import OpenAI, RateLimitError, NotFoundError
+from openai import OpenAI, RateLimitError, NotFoundError, BadRequestError
 
 from .config import settings
 from .retriever import retrieve
@@ -12,13 +13,19 @@ _openrouter = OpenAI(
     base_url="https://openrouter.ai/api/v1",
 )
 
-# Primary model from .env, then fallbacks tried in order if unavailable/rate-limited
+# Primary model from .env, then fallbacks tried in order.
+# Models are spread across different upstream providers so they don't all
+# rate-limit at the same time (Venice, Fireworks, Together, Google, etc.)
 _FALLBACK_MODELS = [
     settings.llm_model,
-    "mistralai/mistral-7b-instruct:free",
-    "qwen/qwq-32b:free",
-    "microsoft/phi-3-mini-128k-instruct:free",
-    "nousresearch/hermes-3-llama-3.1-405b:free",
+    "mistralai/mistral-7b-instruct:free",        # Fireworks / Together
+    "google/gemma-2-9b-it:free",                 # Google
+    "google/gemma-3-1b-it:free",                 # Google (small, fast)
+    "qwen/qwen-2-7b-instruct:free",              # Together
+    "microsoft/phi-3-mini-128k-instruct:free",   # Azure / Together
+    "meta-llama/llama-3.2-3b-instruct:free",     # Fireworks
+    "openchat/openchat-7b:free",                 # Lepton
+    "huggingfaceh4/zephyr-7b-beta:free",         # HuggingFace
 ]
 
 _SYSTEM_PROMPT = """You are a precise document assistant. Answer ONLY using the context provided below.
@@ -35,7 +42,8 @@ class GeneratorResponse:
 
 def answer(query: str, top_k: int | None = None) -> GeneratorResponse:
     """Retrieve relevant chunks and generate a grounded answer via OpenRouter.
-    Automatically falls back through free models if one is unavailable or rate-limited.
+    Automatically falls back through free models across different providers
+    if one is unavailable or rate-limited.
     """
     matches = retrieve(query, top_k=top_k)
 
@@ -60,7 +68,7 @@ def answer(query: str, top_k: int | None = None) -> GeneratorResponse:
     models_to_try = [m for m in _FALLBACK_MODELS if not (m in seen or seen.add(m))]
 
     last_error: Exception | None = None
-    for model in models_to_try:
+    for i, model in enumerate(models_to_try):
         try:
             completion = _openrouter.chat.completions.create(
                 model=model,
@@ -76,11 +84,18 @@ def answer(query: str, top_k: int | None = None) -> GeneratorResponse:
                 sources=matches,
                 model_used=model,
             )
-        except (RateLimitError, NotFoundError) as e:
+        except (RateLimitError, NotFoundError, BadRequestError) as e:
             last_error = e
-            continue  # try next model
+            # Brief pause before trying the next model
+            if i < len(models_to_try) - 1:
+                time.sleep(1)
+            continue
 
     raise RuntimeError(
-        f"All free models are currently unavailable. Last error: {last_error}\n"
-        "Try again in a few minutes or add credit at https://openrouter.ai/settings/integrations"
+        "⚠️ All free models are currently overloaded.\n\n"
+        "Options:\n"
+        "1. Wait 1–2 minutes and try again\n"
+        "2. Add $1 credit at https://openrouter.ai/settings/integrations "
+        "to unlock rate-limit-free access\n\n"
+        f"Last error: {last_error}"
     )
