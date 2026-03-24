@@ -163,9 +163,9 @@ if prompt := st.chat_input("Ask a question about your documents…"):
 
     # Generate answer
     with st.chat_message("assistant"):
-        with st.spinner("Retrieving and generating… (trying available free models)"):
+        with st.spinner("Retrieving and generating…"):
             try:
-                result = answer(prompt)
+                result = answer(prompt, chat_history=st.session_state.chat_history)
             except RuntimeError as e:
                 st.warning(str(e))
                 st.stop()
