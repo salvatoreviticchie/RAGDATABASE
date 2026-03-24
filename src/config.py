@@ -29,13 +29,14 @@ def get_pc() -> Pinecone:
     return Pinecone(api_key=settings.pinecone_api_key)
 
 
-def get_index():
+def get_index(index_name: str | None = None):
     """Return a Pinecone Index object, creating the index if it does not exist."""
     pc = get_pc()
+    name = index_name or settings.pinecone_index_name
     existing = [idx.name for idx in pc.list_indexes()]
-    if settings.pinecone_index_name not in existing:
+    if name not in existing:
         pc.create_index(
-            name=settings.pinecone_index_name,
+            name=name,
             dimension=settings.embedding_dimensions,
             metric="cosine",
             spec=ServerlessSpec(
@@ -43,4 +44,14 @@ def get_index():
                 region=settings.pinecone_region,
             ),
         )
-    return pc.Index(settings.pinecone_index_name)
+    return pc.Index(name)
+
+
+def list_indexes() -> list[str]:
+    """Return all Pinecone index names for this API key."""
+    return [idx.name for idx in get_pc().list_indexes()]
+
+
+def delete_index(index_name: str) -> None:
+    """Permanently delete a Pinecone index and all its vectors."""
+    get_pc().delete_index(index_name)

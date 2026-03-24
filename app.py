@@ -5,7 +5,8 @@ from pathlib import Path
 
 import streamlit as st
 
-from src.ingestor import ingest, delete_document
+from src.ingestor import ingest, delete_document, clear_index
+from src.config import list_indexes, delete_index, get_index, settings
 from src.generator import answer
 
 UPLOAD_DIR = Path("data/uploads")
@@ -18,6 +19,8 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history: list[dict] = []
 if "indexed_files" not in st.session_state:
     st.session_state.indexed_files: set[str] = set()
+if "confirm_clear" not in st.session_state:
+    st.session_state.confirm_clear = False
 
 # ── Sidebar — document upload ─────────────────────────────────────────────────
 with st.sidebar:
@@ -56,6 +59,68 @@ with st.sidebar:
                 st.session_state.indexed_files.discard(fname)
                 st.success(f"Deleted **{fname}** ({deleted} vectors removed)")
                 st.rerun()
+
+    # ── Index management ──────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("**Index management**")
+    st.caption(f"Active index: `{settings.pinecone_index_name}`")
+
+    # ── Clear current index ───────────────────────────────────────────────────
+    if not st.session_state.confirm_clear:
+        if st.button("🧹 Clear entire index", use_container_width=True):
+            st.session_state.confirm_clear = True
+            st.rerun()
+    else:
+        st.warning("This will delete **all vectors** in the current index. Are you sure?")
+        col1, col2 = st.columns(2)
+        if col1.button("✅ Yes, clear it", use_container_width=True):
+            with st.spinner("Clearing index…"):
+                clear_index()
+                # Remove all local upload files
+                for f in UPLOAD_DIR.iterdir():
+                    f.unlink()
+            st.session_state.indexed_files.clear()
+            st.session_state.chat_history.clear()
+            st.session_state.confirm_clear = False
+            st.success("Index cleared.")
+            st.rerun()
+        if col2.button("❌ Cancel", use_container_width=True):
+            st.session_state.confirm_clear = False
+            st.rerun()
+
+    # ── Create a new named index ──────────────────────────────────────────────
+    with st.expander("➕ Create new index"):
+        new_index_name = st.text_input(
+            "Index name", placeholder="my-new-index", key="new_index_name"
+        )
+        if st.button("Create index", use_container_width=True):
+            if not new_index_name.strip():
+                st.error("Please enter a name for the new index.")
+            else:
+                with st.spinner(f"Creating index '{new_index_name}'…"):
+                    get_index(new_index_name.strip())
+                st.success(
+                    f"Index **{new_index_name}** created! "
+                    f"To use it, set `PINECONE_INDEX_NAME={new_index_name}` in your `.env` and restart."
+                )
+
+    # ── List & delete existing indexes ───────────────────────────────────────
+    with st.expander("🗂️ All indexes"):
+        all_indexes = list_indexes()
+        if not all_indexes:
+            st.info("No indexes found.")
+        for idx_name in all_indexes:
+            col1, col2 = st.columns([4, 1])
+            label = f"**{idx_name}**" + (" ← active" if idx_name == settings.pinecone_index_name else "")
+            col1.markdown(label)
+            if idx_name != settings.pinecone_index_name:
+                if col2.button("🗑️", key=f"delidx_{idx_name}", help=f"Delete index {idx_name}"):
+                    with st.spinner(f"Deleting index '{idx_name}'…"):
+                        delete_index(idx_name)
+                    st.success(f"Index **{idx_name}** deleted.")
+                    st.rerun()
+            else:
+                col2.markdown("🔒")
 
 # ── Main area — chat interface ────────────────────────────────────────────────
 st.title("📄 RAG Document Q&A")

@@ -52,6 +52,11 @@ def _embed_batch(texts: list[str]) -> list[list[float]]:
     return vectors
 
 
+def clear_index() -> None:
+    """Delete ALL vectors from the current index (keeps the index itself)."""
+    get_index().delete(delete_all=True)
+
+
 def delete_document(filename: str) -> int:
     """
     Delete all Pinecone vectors that belong to *filename*.
