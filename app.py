@@ -93,15 +93,21 @@ with st.sidebar:
         new_index_name = st.text_input(
             "Index name", placeholder="my-new-index", key="new_index_name"
         )
+        # Sanitize: lowercase, replace spaces/underscores with hyphens, strip invalid chars
+        import re
+        sanitized = re.sub(r"[^a-z0-9-]", "-", new_index_name.strip().lower()).strip("-")
+        sanitized = re.sub(r"-+", "-", sanitized)  # collapse multiple hyphens
+        if sanitized and sanitized != new_index_name.strip():
+            st.caption(f"ℹ️ Will be created as: `{sanitized}`")
         if st.button("Create index", use_container_width=True):
-            if not new_index_name.strip():
-                st.error("Please enter a name for the new index.")
+            if not sanitized:
+                st.error("Please enter a valid name (letters, numbers, hyphens only).")
             else:
-                with st.spinner(f"Creating index '{new_index_name}'…"):
-                    get_index(new_index_name.strip())
+                with st.spinner(f"Creating index '{sanitized}'…"):
+                    get_index(sanitized)
                 st.success(
-                    f"Index **{new_index_name}** created! "
-                    f"To use it, set `PINECONE_INDEX_NAME={new_index_name}` in your `.env` and restart."
+                    f"Index **{sanitized}** created! "
+                    f"To use it, set `PINECONE_INDEX_NAME={sanitized}` in your `.env` and restart."
                 )
 
     # ── List & delete existing indexes ───────────────────────────────────────
