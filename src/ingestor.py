@@ -1,0 +1,105 @@
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import fitz  # PyMuPDF
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from openai import OpenAI
+
+from .config import settings, get_index
+from .utils import make_vector_id, clean_text
+
+_openai = OpenAI(api_key=settings.openai_api_key)
+
+# 4 chars ≈ 1 token; convert token counts to character counts
+_CHUNK_SIZE_CHARS = settings.chunk_size * 4
+_CHUNK_OVERLAP_CHARS = settings.chunk_overlap * 4
+
+_splitter = RecursiveCharacterTextSplitter(
+    chunk_size=_CHUNK_SIZE_CHARS,
+    chunk_overlap=_CHUNK_OVERLAP_CHARS,
+    separators=["\n\n", "\n", ". ", " ", ""],
+)
+
+
+def _extract_pages(file_path: str) -> list[tuple[int, str]]:
+    """Return list of (page_number, text) tuples. Page is 0 for plain text files."""
+    ext = Path(file_path).suffix.lower()
+    if ext == ".pdf":
+        doc = fitz.open(file_path)
+        pages = []
+        for i, page in enumerate(doc):
+            text = clean_text(page.get_text("text"))
+            if text:
+                pages.append((i + 1, text))
+        return pages
+    else:
+        with open(file_path, encoding="utf-8") as f:
+            return [(0, clean_text(f.read()))]
+
+
+def _embed_batch(texts: list[str]) -> list[list[float]]:
+    """Embed a list of texts using OpenAI, in batches of 100."""
+    vectors: list[list[float]] = []
+    batch_size = 100
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i : i + batch_size]
+        response = _openai.embeddings.create(
+            input=batch,
+            model=settings.embedding_model,
+        )
+        vectors.extend([item.embedding for item in response.data])
+    return vectors
+
+
+def ingest(file_path: str) -> list[dict]:
+    """
+    Parse, chunk, embed, and upsert a document into Pinecone.
+    Returns a list of chunk metadata dicts.
+    """
+    filename = Path(file_path).name
+    pages = _extract_pages(file_path)
+
+    # Build flat list of chunk records preserving page provenance
+    chunks: list[dict] = []
+    chunk_index = 0
+    for page_num, page_text in pages:
+        splits = _splitter.split_text(page_text)
+        for text in splits:
+            chunks.append({
+                "chunk_index": chunk_index,
+                "source_file": filename,
+                "page": page_num,
+                "text": text,
+            })
+            chunk_index += 1
+
+    if not chunks:
+        return []
+
+    # Embed all chunks
+    texts = [c["text"] for c in chunks]
+    vectors = _embed_batch(texts)
+
+    # Build Pinecone upsert payload
+    records = [
+        {
+            "id": make_vector_id(filename, c["chunk_index"]),
+            "values": vec,
+            "metadata": {
+                "source_file": c["source_file"],
+                "page": c["page"],
+                "chunk_index": c["chunk_index"],
+                "text": c["text"],
+            },
+        }
+        for c, vec in zip(chunks, vectors)
+    ]
+
+    index = get_index()
+    batch_size = 100
+    for i in range(0, len(records), batch_size):
+        index.upsert(vectors=records[i : i + batch_size])
+
+    return chunks

@@ -1,0 +1,6 @@
+openai==1.35.14
+pinecone==4.1.0
+streamlit==1.37.0
+PyMuPDF==1.24.7
+langchain-text-splitters==0.2.2
+python-dotenv==1.0.1
