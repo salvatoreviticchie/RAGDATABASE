@@ -26,8 +26,8 @@ if "confirm_clear" not in st.session_state:
 with st.sidebar:
     st.title("📂 Documents")
     uploaded_files = st.file_uploader(
-        "Upload PDF or TXT files",
-        type=["pdf", "txt"],
+        "Upload PDF, DOCX, TXT or images",
+        type=["pdf", "docx", "txt", "png", "jpg", "jpeg", "webp", "gif"],
         accept_multiple_files=True,
     )
 
@@ -38,7 +38,9 @@ with st.sidebar:
                 continue
             save_path = UPLOAD_DIR / uf.name
             save_path.write_bytes(uf.read())
-            with st.spinner(f"Processing {uf.name}…"):
+            is_image = uf.name.lower().rsplit(".", 1)[-1] in {"png", "jpg", "jpeg", "webp", "gif"}
+            spin_msg = f"Analysing image with vision model… {uf.name}" if is_image else f"Processing {uf.name}…"
+            with st.spinner(spin_msg):
                 chunks = ingest(str(save_path))
             st.success(f"Indexed {len(chunks)} chunks from **{uf.name}**")
             st.session_state.indexed_files.add(uf.name)

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-import os
+import base64
 from pathlib import Path
 
 import fitz  # PyMuPDF
+from docx import Document as DocxDocument
+from openai import OpenAI
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from .config import settings, get_index, get_pc
@@ -19,22 +21,112 @@ _splitter = RecursiveCharacterTextSplitter(
     separators=["\n\n", "\n", ". ", " ", ""],
 )
 
+# Supported file types
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+TEXT_EXTENSIONS   = {".txt"}
+DOCX_EXTENSIONS   = {".docx"}
+PDF_EXTENSIONS    = {".pdf"}
+ALL_EXTENSIONS    = PDF_EXTENSIONS | DOCX_EXTENSIONS | TEXT_EXTENSIONS | IMAGE_EXTENSIONS
+
+_openrouter = OpenAI(
+    api_key=settings.openrouter_api_key,
+    base_url="https://openrouter.ai/api/v1",
+)
+
+
+# ── Extractors ────────────────────────────────────────────────────────────────
+
+def _extract_pdf(file_path: str) -> list[tuple[int, str]]:
+    """Return list of (page_number, text) from a PDF."""
+    doc = fitz.open(file_path)
+    pages = []
+    for i, page in enumerate(doc):
+        text = clean_text(page.get_text("text"))
+        if text:
+            pages.append((i + 1, text))
+    return pages
+
+
+def _extract_docx(file_path: str) -> list[tuple[int, str]]:
+    """Extract text from a .docx file. Returns single 'page' of full text."""
+    doc = DocxDocument(file_path)
+    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+
+    # Also extract text from tables
+    for table in doc.tables:
+        for row in table.rows:
+            row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+            if row_text:
+                paragraphs.append(row_text)
+
+    full_text = clean_text("\n".join(paragraphs))
+    return [(0, full_text)] if full_text else []
+
+
+def _extract_txt(file_path: str) -> list[tuple[int, str]]:
+    """Extract text from a plain text file."""
+    with open(file_path, encoding="utf-8", errors="replace") as f:
+        return [(0, clean_text(f.read()))]
+
+
+def _extract_image(file_path: str) -> list[tuple[int, str]]:
+    """
+    Send an image to a vision LLM and return its text description.
+    The description is what gets embedded and stored — makes images searchable.
+    """
+    with open(file_path, "rb") as f:
+        image_data = base64.b64encode(f.read()).decode("utf-8")
+
+    ext = Path(file_path).suffix.lower().lstrip(".")
+    mime_map = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "webp": "webp", "gif": "gif"}
+    mime_type = f"image/{mime_map.get(ext, 'jpeg')}"
+
+    response = _openrouter.chat.completions.create(
+        model=settings.vision_model,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime_type};base64,{image_data}"},
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            "Describe this image in full detail. Include: any visible text, "
+                            "numbers, labels, titles; the content of charts, graphs or diagrams; "
+                            "objects, people, settings; and any other relevant information. "
+                            "Write in plain prose so the description is searchable."
+                        ),
+                    },
+                ],
+            }
+        ],
+        max_tokens=1024,
+    )
+
+    description = response.choices[0].message.content
+    filename = Path(file_path).name
+    tagged = f"[Image: {filename}]\n{description}"
+    return [(0, tagged)]
+
 
 def _extract_pages(file_path: str) -> list[tuple[int, str]]:
-    """Return list of (page_number, text) tuples. Page is 0 for plain text files."""
+    """Route to the correct extractor based on file extension."""
     ext = Path(file_path).suffix.lower()
-    if ext == ".pdf":
-        doc = fitz.open(file_path)
-        pages = []
-        for i, page in enumerate(doc):
-            text = clean_text(page.get_text("text"))
-            if text:
-                pages.append((i + 1, text))
-        return pages
-    else:
-        with open(file_path, encoding="utf-8") as f:
-            return [(0, clean_text(f.read()))]
+    if ext in PDF_EXTENSIONS:
+        return _extract_pdf(file_path)
+    if ext in DOCX_EXTENSIONS:
+        return _extract_docx(file_path)
+    if ext in TEXT_EXTENSIONS:
+        return _extract_txt(file_path)
+    if ext in IMAGE_EXTENSIONS:
+        return _extract_image(file_path)
+    raise ValueError(f"Unsupported file type: {ext}")
 
+
+# ── Pinecone helpers ──────────────────────────────────────────────────────────
 
 def _embed_batch(texts: list[str]) -> list[list[float]]:
     """Embed a list of texts using Pinecone Inference API, in batches of 96."""
@@ -63,21 +155,18 @@ def delete_document(filename: str) -> int:
     Returns the number of vectors deleted (approximate via stats diff).
     """
     index = get_index()
-
-    # Count before
     before = index.describe_index_stats().total_vector_count
-
-    # Delete by metadata filter — removes every chunk for this file
     index.delete(filter={"source_file": {"$eq": filename}})
-
-    # Count after
     after = index.describe_index_stats().total_vector_count
     return max(0, before - after)
 
 
+# ── Main entry point ──────────────────────────────────────────────────────────
+
 def ingest(file_path: str) -> list[dict]:
     """
     Parse, chunk, embed, and upsert a document into Pinecone.
+    Supports: PDF, DOCX, TXT, PNG, JPG, JPEG, WEBP, GIF.
     Returns a list of chunk metadata dicts.
     """
     filename = Path(file_path).name
