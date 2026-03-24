@@ -14,7 +14,7 @@ class Settings:
     pinecone_cloud: str = field(default_factory=lambda: os.getenv("PINECONE_CLOUD", "aws"))
     pinecone_region: str = field(default_factory=lambda: os.getenv("PINECONE_REGION", "us-east-1"))
     embedding_model: str = field(default_factory=lambda: os.getenv("EMBEDDING_MODEL", "llama-text-embed-v2"))
-    llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "google/gemma-3-27b-it:free"))
+    llm_model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "meta-llama/llama-3.3-70b-instruct:free"))
     embedding_dimensions: int = field(default_factory=lambda: int(os.getenv("EMBEDDING_DIMENSIONS", "1024")))
     chunk_size: int = field(default_factory=lambda: int(os.getenv("CHUNK_SIZE", "512")))
     chunk_overlap: int = field(default_factory=lambda: int(os.getenv("CHUNK_OVERLAP", "64")))
