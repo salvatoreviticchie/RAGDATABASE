@@ -82,6 +82,8 @@ if prompt := st.chat_input("Ask a question about your documents…"):
         with st.spinner("Retrieving and generating…"):
             result = answer(prompt)
         st.markdown(result.answer)
+        if result.model_used:
+            st.caption(f"🤖 Answered by `{result.model_used}`")
         if result.sources:
             with st.expander("Sources", expanded=False):
                 for src in result.sources:
