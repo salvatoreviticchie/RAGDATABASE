@@ -1,5 +1,5 @@
 openai>=1.52.0
-pinecone==4.1.0
+pinecone>=5.0.0
 streamlit==1.37.0
 PyMuPDF==1.24.7
 langchain-text-splitters==0.2.2
