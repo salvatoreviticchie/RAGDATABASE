@@ -6,12 +6,10 @@ from dataclasses import dataclass
 
 from openai import OpenAI
 
-from .config import settings
+from openai import RateLimitError, NotFoundError, BadRequestError
 
-_openrouter = OpenAI(
-    api_key=settings.openrouter_api_key,
-    base_url="https://openrouter.ai/api/v1",
-)
+from .config import settings
+from .generator import _openrouter, _FALLBACK_MODELS
 
 _EVAL_PROMPT = """\
 You are an objective RAG evaluation assistant. Given a question, the context chunks \
@@ -90,32 +88,37 @@ def evaluate(query: str, answer: str, sources: list[dict]) -> EvalScores | None:
 
     prompt = _EVAL_PROMPT.format(query=query, context=context, answer=answer)
 
-    try:
-        completion = _openrouter.chat.completions.create(
-            model=settings.llm_model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=512,
-        )
-        raw = completion.choices[0].message.content.strip()
-        print(f"[evaluator] raw response: {raw[:300]}")  # visible in terminal
+    seen: set[str] = set()
+    models = [m for m in _FALLBACK_MODELS if not (m in seen or seen.add(m))]
 
-        # Strip markdown code fences if the model wrapped the JSON
-        json_match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if not json_match:
-            print("[evaluator] could not find JSON in response")
+    for model in models:
+        try:
+            completion = _openrouter.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                max_tokens=512,
+            )
+            raw = completion.choices[0].message.content.strip()
+
+            json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+            if not json_match:
+                return None
+
+            data = json.loads(json_match.group())
+
+            return EvalScores(
+                groundedness=max(0.0, min(1.0, float(data.get("groundedness", 0)))),
+                answer_relevance=max(0.0, min(1.0, float(data.get("answer_relevance", 0)))),
+                context_relevance=max(0.0, min(1.0, float(data.get("context_relevance", 0)))),
+                groundedness_reason=data.get("groundedness_reason", ""),
+                answer_relevance_reason=data.get("answer_relevance_reason", ""),
+                context_relevance_reason=data.get("context_relevance_reason", ""),
+            )
+        except (RateLimitError, NotFoundError, BadRequestError):
+            continue
+        except Exception as e:
+            print(f"[evaluator] exception: {e}")
             return None
 
-        data = json.loads(json_match.group())
-
-        return EvalScores(
-            groundedness=max(0.0, min(1.0, float(data.get("groundedness", 0)))),
-            answer_relevance=max(0.0, min(1.0, float(data.get("answer_relevance", 0)))),
-            context_relevance=max(0.0, min(1.0, float(data.get("context_relevance", 0)))),
-            groundedness_reason=data.get("groundedness_reason", ""),
-            answer_relevance_reason=data.get("answer_relevance_reason", ""),
-            context_relevance_reason=data.get("context_relevance_reason", ""),
-        )
-    except Exception as e:
-        print(f"[evaluator] exception: {e}")
-        return None  # non-blocking: evaluation failure never surfaces to the user
+    return None
