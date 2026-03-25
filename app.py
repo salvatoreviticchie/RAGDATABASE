@@ -8,10 +8,50 @@ import streamlit as st
 from src.ingestor import ingest, delete_document, clear_index
 from src.config import list_indexes, delete_index, get_index, settings
 from src.generator import answer
+from src.evaluator import evaluate, EvalScores
 from src.persistence import load_files, add_file, remove_file, clear_files, remove_index
 
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _render_eval(scores: EvalScores) -> None:
+    """Render the three RAG-Triad scores as progress bars inside an expander."""
+
+    def _badge(score: float) -> str:
+        if score >= 0.75:
+            return "✅"
+        if score >= 0.50:
+            return "⚠️"
+        return "❌"
+
+    def _color(score: float) -> str:
+        if score >= 0.75:
+            return "green"
+        if score >= 0.50:
+            return "orange"
+        return "red"
+
+    with st.expander(
+        f"📊 Answer quality  —  avg score: **{scores.average:.0%}**  {_badge(scores.average)}",
+        expanded=False,
+    ):
+        metrics = [
+            ("🔒 Groundedness",      scores.groundedness,      scores.groundedness_reason),
+            ("🎯 Answer Relevance",  scores.answer_relevance,  scores.answer_relevance_reason),
+            ("📚 Context Relevance", scores.context_relevance, scores.context_relevance_reason),
+        ]
+        for label, score, reason in metrics:
+            col_label, col_bar, col_score = st.columns([2, 5, 1])
+            col_label.markdown(f"**{label}**")
+            col_bar.progress(score)
+            col_score.markdown(
+                f"<span style='color:{_color(score)};font-weight:bold'>{score:.0%}</span>",
+                unsafe_allow_html=True,
+            )
+            if reason:
+                st.caption(f"_{reason}_")
+            st.markdown("")  # spacing
 
 st.set_page_config(page_title="RAG Document Q&A", page_icon="📄", layout="wide")
 
@@ -278,14 +318,23 @@ if prompt := st.chat_input("Ask a question about your documents…"):
         st.markdown(result.answer)
         if result.model_used:
             st.caption(f"🤖 Answered by `{result.model_used}`")
+
+        # ── RAG Triad evaluation (non-blocking) ───────────────────────────────
         if result.sources:
-            with st.expander("Sources", expanded=False):
+            with st.spinner("Evaluating answer quality…"):
+                scores = evaluate(prompt, result.answer, result.sources)
+            if scores:
+                _render_eval(scores)
+
+        # ── Retrieved sources ─────────────────────────────────────────────────
+        if result.sources:
+            with st.expander("📎 Sources", expanded=False):
                 for src in result.sources:
                     meta = src["metadata"]
                     score = src["score"]
                     st.markdown(
                         f"**{meta['source_file']}** — Page {meta['page']} | "
-                        f"Score: `{score:.3f}`"
+                        f"Similarity: `{score:.3f}`"
                     )
                     st.text(meta["text"][:400] + ("…" if len(meta["text"]) > 400 else ""))
                     st.divider()
