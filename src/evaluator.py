@@ -98,10 +98,12 @@ def evaluate(query: str, answer: str, sources: list[dict]) -> EvalScores | None:
             max_tokens=512,
         )
         raw = completion.choices[0].message.content.strip()
+        print(f"[evaluator] raw response: {raw[:300]}")  # visible in terminal
 
         # Strip markdown code fences if the model wrapped the JSON
         json_match = re.search(r"\{.*\}", raw, re.DOTALL)
         if not json_match:
+            print("[evaluator] could not find JSON in response")
             return None
 
         data = json.loads(json_match.group())
@@ -114,5 +116,6 @@ def evaluate(query: str, answer: str, sources: list[dict]) -> EvalScores | None:
             answer_relevance_reason=data.get("answer_relevance_reason", ""),
             context_relevance_reason=data.get("context_relevance_reason", ""),
         )
-    except Exception:
+    except Exception as e:
+        print(f"[evaluator] exception: {e}")
         return None  # non-blocking: evaluation failure never surfaces to the user
