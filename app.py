@@ -13,6 +13,7 @@ from src.generator import answer
 from src.evaluator import evaluate, EvalScores
 from src.persistence import load_files, add_file, remove_file, clear_files, remove_index
 from src.audit import init_db, log as audit_log, recent as audit_recent, summary_stats, scores_over_time
+from src.anonymizer import scan as pii_scan, presidio_available
 
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -68,6 +69,14 @@ if "chat_history" not in st.session_state:
 
 if "confirm_clear" not in st.session_state:
     st.session_state.confirm_clear = False
+
+# PII anonymization — pending query flow
+if "pending_query" not in st.session_state:
+    st.session_state.pending_query: str | None = None
+if "pending_pii" not in st.session_state:
+    st.session_state.pending_pii = None   # AnonymizeResult | None
+if "anonymize_enabled" not in st.session_state:
+    st.session_state.anonymize_enabled: bool = True
 
 if "preview_file" not in st.session_state:
     st.session_state.preview_file: str | None = None
@@ -175,6 +184,18 @@ with st.sidebar:
                     remove_file(active_index, fname)
                     st.success(f"Deleted **{fname}** ({deleted} vectors removed)")
                     st.rerun()
+
+    # ── Privacy settings ──────────────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("**🔒 Privacy**")
+    st.session_state.anonymize_enabled = st.toggle(
+        "Scan queries for PII",
+        value=st.session_state.anonymize_enabled,
+        help="Detects emails, phone numbers, names etc. before sending to the LLM",
+    )
+    if st.session_state.anonymize_enabled:
+        mode = "Presidio (NLP)" if presidio_available() else "Regex (install spaCy for full NLP)"
+        st.caption(f"Detection engine: `{mode}`")
 
     # ── Index management ──────────────────────────────────────────────────────
     st.markdown("---")
@@ -348,8 +369,55 @@ for msg in st.session_state.chat_history:
                     st.text(meta["text"][:400] + ("…" if len(meta["text"]) > 400 else ""))
                     st.divider()
 
-# Chat input
-if prompt := st.chat_input("Ask a question about your documents…"):
+# ── PII warning banner (shown when a pending query has PII) ──────────────────
+if st.session_state.pending_pii and st.session_state.pending_pii.has_pii:
+    pii_result = st.session_state.pending_pii
+    with st.container(border=True):
+        st.warning("⚠️ **PII detected in your query** — review before sending:")
+        for entity in pii_result.entities:
+            st.markdown(f"- `{entity.original}` → **{entity.entity_type}** → will become `{entity.placeholder}`")
+        st.markdown(f"**Anonymized query:** _{pii_result.anonymized}_")
+        col1, col2, col3 = st.columns([2, 2, 1])
+        if col1.button("🔒 Send anonymized", type="primary", use_container_width=True):
+            st.session_state._send_query = pii_result.anonymized
+            st.session_state._original_query = pii_result.original
+            st.session_state.pending_pii = None
+            st.rerun()
+        if col2.button("➡️ Send as-is", use_container_width=True):
+            st.session_state._send_query = pii_result.original
+            st.session_state._original_query = pii_result.original
+            st.session_state.pending_pii = None
+            st.rerun()
+        if col3.button("✏️ Edit", use_container_width=True):
+            st.session_state.pending_query = None
+            st.session_state.pending_pii = None
+            st.rerun()
+    st.stop()
+
+# ── Resolve query: either from PII flow or fresh chat input ──────────────────
+prompt = None
+original_prompt = None
+
+if hasattr(st.session_state, "_send_query") and st.session_state._send_query:
+    prompt = st.session_state._send_query
+    original_prompt = st.session_state._original_query
+    st.session_state._send_query = None
+    st.session_state._original_query = None
+elif raw := st.chat_input("Ask a question about your documents…"):
+    if not st.session_state.indexed_files:
+        st.warning("Please upload and index at least one document first.")
+        st.stop()
+    # PII scan
+    if st.session_state.anonymize_enabled:
+        pii_result = pii_scan(raw)
+        if pii_result.has_pii:
+            st.session_state.pending_query = raw
+            st.session_state.pending_pii = pii_result
+            st.rerun()
+    prompt = raw
+    original_prompt = raw
+
+if prompt:
     if not st.session_state.indexed_files:
         st.warning("Please upload and index at least one document first.")
         st.stop()
@@ -357,6 +425,8 @@ if prompt := st.chat_input("Ask a question about your documents…"):
     st.session_state.chat_history.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
+        if original_prompt and original_prompt != prompt:
+            st.caption("🔒 Query was anonymized before sending")
 
     with st.chat_message("assistant"):
         with st.spinner("Retrieving and generating…"):
@@ -382,9 +452,10 @@ if prompt := st.chat_input("Ask a question about your documents…"):
                 _render_eval(scores)
 
         # ── Audit log ─────────────────────────────────────────────────────────
+        # Log the original (pre-anonymization) query for full audit trail
         audit_log(
             index_name=active_index,
-            query=prompt,
+            query=original_prompt or prompt,
             answer=result.answer,
             model_used=result.model_used,
             groundedness=scores.groundedness if scores else None,

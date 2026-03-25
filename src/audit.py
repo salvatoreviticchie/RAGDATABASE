@@ -20,17 +20,18 @@ def init_db() -> None:
     with _conn() as con:
         con.execute("""
             CREATE TABLE IF NOT EXISTS audit_log (
-                id               INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp        TEXT    NOT NULL,
-                index_name       TEXT    NOT NULL,
-                query            TEXT    NOT NULL,
-                answer           TEXT    NOT NULL,
-                model_used       TEXT,
-                groundedness     REAL,
-                answer_relevance REAL,
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp         TEXT    NOT NULL,
+                index_name        TEXT    NOT NULL,
+                query             TEXT    NOT NULL,
+                answer            TEXT    NOT NULL,
+                model_used        TEXT,
+                groundedness      REAL,
+                answer_relevance  REAL,
                 context_relevance REAL,
-                avg_score        REAL,
-                sources          TEXT
+                avg_score         REAL,
+                sources           TEXT,
+                pii_detected      INTEGER DEFAULT 0
             )
         """)
 
