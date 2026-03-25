@@ -122,6 +122,44 @@ Open **http://localhost:8501** in your browser.
 
 ---
 
+## Tuning retrieval quality
+
+The three most impactful settings are in `.env`:
+
+### Chunk size (`CHUNK_SIZE`)
+
+Controls how many tokens each document chunk contains before being embedded.
+
+| Value | Best for |
+|-------|----------|
+| `512` | Short documents, FAQs — fast and precise |
+| `1024` | **Default** — balanced, works well for most PDFs |
+| `2048` | Long reports, books — maximum context per chunk |
+
+### Chunk overlap (`CHUNK_OVERLAP`)
+
+How many tokens two adjacent chunks share. Prevents important sentences from being cut in half at a boundary. Aim for ~10–15% of `CHUNK_SIZE`.
+
+| Value | Effect |
+|-------|--------|
+| `64` | Minimal overlap |
+| `128` | **Default** — recommended |
+| `256` | High overlap — better for dense technical documents |
+
+### Top-K (`TOP_K`)
+
+How many chunks are retrieved per question and sent to the LLM as context.
+
+| Value | Effect |
+|-------|--------|
+| `5` | Focused, fast |
+| `8` | **Default** — better for multi-part questions |
+| `12` | Maximum — use for very long documents |
+
+> ⚠️ **Changing `CHUNK_SIZE` or `CHUNK_OVERLAP` requires re-indexing.** Clear the index from the sidebar and re-upload your documents after changing these values.
+
+---
+
 ## Choosing a different model
 
 ### Embedding models (Pinecone Inference — both free)
@@ -138,19 +176,22 @@ EMBEDDING_MODEL=multilingual-e5-large
 EMBEDDING_DIMENSIONS=384
 ```
 
-> **Important:** If you change the embedding model you must delete and recreate the Pinecone index (see section below).
+> **Important:** Changing the embedding model requires deleting and recreating the Pinecone index (dimensions change).
 
-### Free LLM models (OpenRouter)
+### LLM models (OpenRouter)
 
 ```env
-LLM_MODEL=google/gemma-3-27b-it:free
+# Paid (recommended — no rate limits with credit)
+LLM_MODEL=meta-llama/llama-3.3-70b-instruct
+
+# Free (may be rate-limited during peak hours)
 LLM_MODEL=meta-llama/llama-3.3-70b-instruct:free
-LLM_MODEL=deepseek/deepseek-chat:free
 LLM_MODEL=mistralai/mistral-7b-instruct:free
 LLM_MODEL=qwen/qwq-32b:free
 ```
 
-Browse the full list at https://openrouter.ai/models?q=free
+The app automatically falls back through multiple models if one is unavailable.
+Browse the full list at https://openrouter.ai/models
 
 ---
 

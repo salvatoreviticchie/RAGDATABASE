@@ -145,8 +145,16 @@ def _embed_batch(texts: list[str]) -> list[list[float]]:
 
 
 def clear_index(index_name: str | None = None) -> None:
-    """Delete ALL vectors from the given index (keeps the index itself)."""
-    get_index(index_name).delete(delete_all=True)
+    """Delete ALL vectors from the given index (keeps the index itself).
+    Silently succeeds if the index is already empty (Pinecone returns 404
+    for delete_all on an empty namespace)."""
+    try:
+        get_index(index_name).delete(delete_all=True)
+    except Exception as e:
+        if "Namespace not found" in str(e) or "404" in str(e):
+            pass  # already empty — that's fine
+        else:
+            raise
 
 
 def delete_document(filename: str, index_name: str | None = None) -> int:
