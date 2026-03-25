@@ -7,7 +7,7 @@ import streamlit as st
 
 import pandas as pd
 
-from src.ingestor import ingest, delete_document, clear_index
+from src.ingestor import ingest, ingest_url, delete_document, clear_index
 from src.config import list_indexes, delete_index, get_index, settings
 from src.generator import answer
 from src.evaluator import evaluate, EvalScores
@@ -114,26 +114,47 @@ with st.sidebar:
 
     # ── Document upload ───────────────────────────────────────────────────────
     st.title("📂 Documents")
-    uploaded_files = st.file_uploader(
-        "Upload PDF, DOCX, TXT or images",
-        type=["pdf", "docx", "txt", "png", "jpg", "jpeg", "webp", "gif"],
-        accept_multiple_files=True,
-    )
+    tab_file, tab_url = st.tabs(["📁 Upload file", "🌐 From URL"])
 
-    if uploaded_files and st.button("Index Documents", type="primary"):
-        for uf in uploaded_files:
-            if uf.name in st.session_state.indexed_files:
-                st.info(f"{uf.name} already indexed.")
-                continue
-            save_path = UPLOAD_DIR / uf.name
-            save_path.write_bytes(uf.read())
-            is_image = uf.name.lower().rsplit(".", 1)[-1] in {"png", "jpg", "jpeg", "webp", "gif"}
-            spin_msg = f"Analysing image with vision model… {uf.name}" if is_image else f"Processing {uf.name}…"
-            with st.spinner(spin_msg):
-                chunks = ingest(str(save_path), index_name=active_index)
-            st.success(f"Indexed {len(chunks)} chunks from **{uf.name}**")
-            st.session_state.indexed_files.add(uf.name)
-            add_file(active_index, uf.name)  # persist to JSON
+    with tab_file:
+        uploaded_files = st.file_uploader(
+            "Upload PDF, DOCX, TXT or images",
+            type=["pdf", "docx", "txt", "png", "jpg", "jpeg", "webp", "gif"],
+            accept_multiple_files=True,
+        )
+        if uploaded_files and st.button("Index Documents", type="primary"):
+            for uf in uploaded_files:
+                if uf.name in st.session_state.indexed_files:
+                    st.info(f"{uf.name} already indexed.")
+                    continue
+                save_path = UPLOAD_DIR / uf.name
+                save_path.write_bytes(uf.read())
+                is_image = uf.name.lower().rsplit(".", 1)[-1] in {"png", "jpg", "jpeg", "webp", "gif"}
+                spin_msg = f"Analysing image with vision model… {uf.name}" if is_image else f"Processing {uf.name}…"
+                with st.spinner(spin_msg):
+                    chunks = ingest(str(save_path), index_name=active_index)
+                st.success(f"Indexed {len(chunks)} chunks from **{uf.name}**")
+                st.session_state.indexed_files.add(uf.name)
+                add_file(active_index, uf.name)
+
+    with tab_url:
+        url_input = st.text_input(
+            "Page URL",
+            placeholder="https://example.com/article",
+            key="url_input",
+        )
+        if st.button("🌐 Scrape & Index", type="primary", key="scrape_btn"):
+            if not url_input.strip():
+                st.error("Please enter a URL.")
+            else:
+                with st.spinner(f"Scraping {url_input}…"):
+                    try:
+                        chunks, label = ingest_url(url_input.strip(), index_name=active_index)
+                        st.success(f"Indexed **{len(chunks)} chunks** from _{label}_")
+                        st.session_state.indexed_files.add(label)
+                        add_file(active_index, label)
+                    except ValueError as e:
+                        st.error(str(e))
 
     if st.session_state.indexed_files:
         st.markdown("---")

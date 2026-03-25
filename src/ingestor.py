@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
+from urllib.parse import urlparse
 
 import fitz  # PyMuPDF
 from docx import Document as DocxDocument
@@ -222,3 +223,69 @@ def ingest(file_path: str, index_name: str | None = None) -> list[dict]:
         index.upsert(vectors=records[i : i + batch_size])
 
     return chunks
+
+
+def ingest_url(url: str, index_name: str | None = None) -> tuple[list[dict], str]:
+    """
+    Scrape *url*, chunk the extracted text, embed and upsert into Pinecone.
+
+    Returns (chunks, source_label) where source_label is a short human-readable
+    name derived from the page title and domain (used as the filename in the UI).
+
+    Raises ValueError with a user-friendly message if scraping fails.
+    """
+    from .scraper import scrape
+
+    result = scrape(url)
+
+    if result.robots_blocked:
+        raise ValueError(result.error)
+    if not result.ok:
+        raise ValueError(result.error or "Could not extract readable text from this URL.")
+
+    # Use "Title (domain)" as the display name
+    domain = urlparse(url).netloc.replace("www.", "")
+    label = f"{result.title[:60]} ({domain})" if result.title else domain
+    # Sanitise for use as a metadata key (no slashes etc.)
+    safe_label = label.replace("/", "-").replace("\\", "-")
+
+    # Split the scraped text into chunks (treat whole page as page 1)
+    splits = _splitter.split_text(result.text)
+    chunks: list[dict] = [
+        {
+            "chunk_index": i,
+            "source_file": safe_label,
+            "page": 1,
+            "text": s,
+            "url": url,
+        }
+        for i, s in enumerate(splits)
+    ]
+
+    if not chunks:
+        raise ValueError("Page was scraped but contained no indexable text.")
+
+    texts = [c["text"] for c in chunks]
+    vectors = _embed_batch(texts)
+
+    records = [
+        {
+            "id": make_vector_id(safe_label, c["chunk_index"]),
+            "values": vec,
+            "metadata": {
+                "source_file": c["source_file"],
+                "page": c["page"],
+                "chunk_index": c["chunk_index"],
+                "text": c["text"],
+                "url": url,
+            },
+        }
+        for c, vec in zip(chunks, vectors)
+    ]
+
+    index = get_index(index_name)
+    batch_size = 100
+    for i in range(0, len(records), batch_size):
+        index.upsert(vectors=records[i : i + batch_size])
+
+    return chunks, safe_label
