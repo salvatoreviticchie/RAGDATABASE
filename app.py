@@ -5,14 +5,18 @@ from pathlib import Path
 
 import streamlit as st
 
+import pandas as pd
+
 from src.ingestor import ingest, delete_document, clear_index
 from src.config import list_indexes, delete_index, get_index, settings
 from src.generator import answer
 from src.evaluator import evaluate, EvalScores
 from src.persistence import load_files, add_file, remove_file, clear_files, remove_index
+from src.audit import init_db, log as audit_log, recent as audit_recent, summary_stats, scores_over_time
 
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+init_db()  # ensure audit table exists
 
 
 def _render_eval(scores: EvalScores) -> None:
@@ -221,6 +225,56 @@ with st.sidebar:
                 st.success(f"Index **{sanitized}** created and switched!")
                 st.rerun()
 
+    # ── Analytics ─────────────────────────────────────────────────────────────
+    with st.expander("📈 Analytics & Audit"):
+        stats = summary_stats()
+        if not stats or not stats.get("total_queries"):
+            st.info("No queries logged yet.")
+        else:
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total queries", stats["total_queries"])
+            col2.metric("Avg quality", f"{(stats['avg_quality'] or 0):.0%}")
+            col3.metric("Avg groundedness", f"{(stats['avg_groundedness'] or 0):.0%}")
+
+            # Score trend chart
+            trend = scores_over_time(50)
+            if len(trend) >= 2:
+                df = pd.DataFrame(trend)
+                df["timestamp"] = pd.to_datetime(df["timestamp"])
+                df = df.set_index("timestamp")
+                st.caption("Quality scores over last 50 queries")
+                st.line_chart(df[["avg_score", "groundedness", "answer_relevance", "context_relevance"]])
+
+            # Recent queries table
+            st.caption("Recent queries")
+            rows = audit_recent(20)
+            if rows:
+                table_data = [
+                    {
+                        "Time": r["timestamp"],
+                        "Query": r["query"][:60] + ("…" if len(r["query"]) > 60 else ""),
+                        "Model": r["model_used"].split("/")[-1] if r["model_used"] else "",
+                        "Score": f"{r['avg_score']:.0%}" if r["avg_score"] else "—",
+                        "G": f"{r['groundedness']:.0%}" if r["groundedness"] else "—",
+                        "AR": f"{r['answer_relevance']:.0%}" if r["answer_relevance"] else "—",
+                        "CR": f"{r['context_relevance']:.0%}" if r["context_relevance"] else "—",
+                    }
+                    for r in rows
+                ]
+                st.dataframe(table_data, use_container_width=True, hide_index=True)
+
+            # CSV export
+            all_rows = audit_recent(10000)
+            if all_rows:
+                csv = pd.DataFrame([dict(r) for r in all_rows]).to_csv(index=False)
+                st.download_button(
+                    "⬇️ Export full audit log (CSV)",
+                    data=csv,
+                    file_name="rag_audit_log.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+
     # List & delete existing indexes
     with st.expander("🗂️ All indexes"):
         if not all_indexes:
@@ -320,11 +374,25 @@ if prompt := st.chat_input("Ask a question about your documents…"):
             st.caption(f"🤖 Answered by `{result.model_used}`")
 
         # ── RAG Triad evaluation (non-blocking) ───────────────────────────────
+        scores = None
         if result.sources:
             with st.spinner("Evaluating answer quality…"):
                 scores = evaluate(prompt, result.answer, result.sources)
             if scores:
                 _render_eval(scores)
+
+        # ── Audit log ─────────────────────────────────────────────────────────
+        audit_log(
+            index_name=active_index,
+            query=prompt,
+            answer=result.answer,
+            model_used=result.model_used,
+            groundedness=scores.groundedness if scores else None,
+            answer_relevance=scores.answer_relevance if scores else None,
+            context_relevance=scores.context_relevance if scores else None,
+            avg_score=scores.average if scores else None,
+            sources=result.sources,
+        )
 
         # ── Retrieved sources ─────────────────────────────────────────────────
         if result.sources:
